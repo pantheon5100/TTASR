@@ -1,0 +1,10 @@
+*.pyc
+*.pth
+
+results
+debug_output
+
+wandb
+log
+test
+tta_pretrained
