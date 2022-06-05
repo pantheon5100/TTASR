@@ -7,6 +7,8 @@ from tta_data import create_dataset
 from tta_sr import TTASR
 from tta_learner import Learner
 
+import torch
+
 import shutil
 import glob
 import json
@@ -23,34 +25,68 @@ def train_and_eval(conf):
     learner = Learner(model)
 
     if conf.test_only:
-        model.eval()
-        
+        model.eval(0)
+        with open(os.path.join(conf.experimentdir, "psnr.txt"), "a") as f:
+            f.write(f"{iteration}. {conf.abs_img_name}. PSNR: {model.UP_psnrs[-1]}\n")
         return
 
+    # generate dataset first
+    data_dir = f"generating_data/data_{conf.abs_img_name}_{conf.input_crop_size}_{conf.num_iters}.pth"
+    os.makedirs(os.path.dirname(data_dir), exist_ok=True)
+
+    data_collection = []
+    if not os.path.exists(data_dir):
+        for iteration, data in enumerate(tqdm.tqdm(dataloader)):
+            data_collection.append(data)
+
+        torch.save(data_collection, data_dir)
+    else:
+        data_collection = torch.load(data_dir)
 
     print('*' * 60 + '\nTraining started ...')
-    for iteration, data in enumerate(tqdm.tqdm(dataloader)):
-    # for iteration, data in enumerate(dataloader):
+    # for iteration, data in enumerate(tqdm.tqdm(dataloader)):
+    best_res = {
+        "iteration": 0,
+        "PSNR": 0,
+    }
+    for iteration, data in enumerate(tqdm.tqdm(data_collection)):
+        if iteration == 0:
+            model.train_G_DN_switch = True
+            model.train_G_UP_switch = False
+            
 
         loss = model.train(data)
         learner.update(iteration, model)
 
         loss["iteration"] = iteration
 
-        if (iteration+1) % conf.eval_iters == 0:
-            wandb.log(loss)
 
         if (iteration+1) % conf.model_save_iter == 0:
             model.save_model(iteration+1)
 
-        if (iteration+1) % 100 == 0 and model.train_G_UP_switch:
-            model.eval()
+        if (iteration+1) % conf.eval_iters == 0 and model.train_G_UP_switch:
+            model.eval(iteration)
             with open(os.path.join(conf.experimentdir, "psnr.txt"), "a") as f:
                 f.write(f"{iteration}. {conf.abs_img_name}. PSNR: {model.UP_psnrs[-1]}\n")
             print(f"{iteration}. {conf.abs_img_name}. PSNR: {model.UP_psnrs[-1]}")
+            
+            loss["eval/psnr"] = model.UP_psnrs[-1]
+            
+            if model.UP_psnrs[-1] > best_res["PSNR"]:
+                best_res["PSNR"] = model.UP_psnrs[-1]
+                best_res["iteration"] = iteration
             pass
+        else:
+            loss["eval/psnr"] = 0
 
-    model.eval()
+
+        if (iteration+1) % conf.eval_iters == 0:
+            wandb.log(loss)
+
+    print("Best PSNR: {}, at iteration: {}".format(best_res["PSNR"], best_res["iteration"]))
+    wandb.run.summary[f"best_psnr_{conf.abs_img_name}"] = best_res["PSNR"]
+    
+    model.eval(0)
 
 
 def main():
@@ -95,7 +131,9 @@ def main():
         entity="kaistssl",
         name=opt.conf.output_dir,
         config=opt.conf,
-        dir=opt.conf.experimentdir
+        dir=opt.conf.experimentdir,
+        save_code=True,
+
         )
 
     # Run DualSR on all images in the input directory

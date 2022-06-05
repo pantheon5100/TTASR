@@ -24,7 +24,7 @@ class options:
         self.parser.add_argument('--scale_factor_downsampler', type=float, default=0.5, help='scale factor for downsampler')
         
         #Lambda Parameters
-        self.parser.add_argument('--lambda_cycle', type=int, default=5, help='lambda parameter for cycle consistency loss')
+        self.parser.add_argument('--lambda_cycle', type=int, default=1, help='lambda parameter for cycle consistency loss')
         self.parser.add_argument('--lambda_interp', type=int, default=2, help='lambda parameter for masked interpolation loss')
         self.parser.add_argument('--lambda_regularization', type=int, default=2, help='lambda parameter for downsampler regularization term')
         
@@ -44,10 +44,10 @@ class options:
         
         if not os.path.exists(self.conf.output_dir):
             os.makedirs(self.conf.output_dir)
-            
 
-        
-        
+
+
+
     def get_config(self, img_name):
         self.conf.abs_img_name = os.path.splitext(img_name)[0]
         self.conf.input_image_path = os.path.join(self.conf.input_dir, img_name)

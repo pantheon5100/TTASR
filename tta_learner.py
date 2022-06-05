@@ -23,11 +23,8 @@ class Learner:
     def update(self, iteration: int, model: TTASR):
         self.G_UP_lr_scheduler.step()
         
-        if iteration == 0:
-            model.train_G_DN_switch = True
-            model.train_G_UP_switch = False
-            
-            return
+
+        #     return
         # Update learning rate every update_l_rate freq
         if iteration % self.update_l_rate_freq == 0:
             for params in model.optimizer_G_DN.param_groups:
@@ -35,9 +32,9 @@ class Learner:
             # for params in model.optimizer_G_UP.param_groups:
             #     params['lr'] /= self.update_l_rate_rate
 
-        if iteration == 1000:
-            model.train_G_UP_switch = True
-            model.train_G_DN_switch = False
+        if (iteration+1) % model.conf.switch_iters == 0:
+            model.train_G_UP_switch = not model.train_G_UP_switch
+            model.train_G_DN_switch = not model.train_G_DN_switch
 
         # Until similar to bicubic is satisfied, don't update any other lambdas
         # if not self.similar_to_bicubic:
