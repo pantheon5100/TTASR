@@ -32,9 +32,6 @@ class Learner:
             # for params in model.optimizer_G_UP.param_groups:
             #     params['lr'] /= self.update_l_rate_rate
 
-        if (iteration+1) % model.conf.switch_iters == 0:
-            model.train_G_UP_switch = not model.train_G_UP_switch
-            model.train_G_DN_switch = not model.train_G_DN_switch
 
         # Until similar to bicubic is satisfied, don't update any other lambdas
         # if not self.similar_to_bicubic:

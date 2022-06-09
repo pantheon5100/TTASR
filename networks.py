@@ -39,7 +39,7 @@ class Generator_UP(nn.Module):
         out = x + self.model(x)  # add skip connections
         return out
 
-        
+
 class Generator_DN(nn.Module):
     def __init__(self, features=64):
         super(Generator_DN, self).__init__()

@@ -47,8 +47,8 @@ class options:
         
         self.conf = self.parser.parse_args()
         
-        if not os.path.exists(self.conf.output_dir):
-            os.makedirs(self.conf.output_dir)
+        # if not os.path.exists(self.conf.output_dir):
+        #     os.makedirs(self.conf.output_dir)
 
 
 
@@ -57,13 +57,23 @@ class options:
         self.conf.input_image_path = os.path.join(self.conf.input_dir, img_name)
         self.conf.kernel_path = os.path.join(self.conf.kernel_dir, self.conf.abs_img_name + '.mat') if self.conf.kernel_dir != '' else None
         # self.conf.gt_path = os.path.join(self.conf.gt_dir, img_name) if self.conf.gt_dir != '' else None
-        self.conf.gt_path = os.path.join(self.conf.gt_dir, img_name[:-6]+".png") if self.conf.gt_dir != '' else None
+
+        if "Set5" in self.conf.gt_dir:
+            self.conf.gt_path = os.path.join(self.conf.gt_dir, img_name[:-6]+".png") if self.conf.gt_dir != '' else None
+        elif "my_RealSR" in self.conf.gt_dir:
+            self.conf.gt_path = os.path.join(self.conf.gt_dir, img_name) 
+        
+        elif "BSD" in self.conf.gt_dir:
+            self.conf.gt_path = os.path.join(self.conf.gt_dir, img_name) 
+
+        else:
+            raise NotImplemented
         # self.conf.gt_path = os.path.join(self.conf.gt_dir, img_name) if self.conf.gt_dir != '' else None
 
         print('*' * 60 + '\nRunning DualSR ...')
         print('input image: \'%s\'' %self.conf.input_image_path)
         print('grand-truth image: \'%s\'' %self.conf.gt_path)
-        print('grand-truth kernel: \'%s\'' %self.conf.kernel_path)
+        # print('grand-truth kernel: \'%s\'' %self.conf.kernel_path)
         return self.conf
 
 
