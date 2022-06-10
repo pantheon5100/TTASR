@@ -11,7 +11,7 @@ import os
 from torch_sobel import Sobel
 
 from tta_model.network_swinir import define_model
-
+from tta_model.get_model import get_model
 
 class TTASR:
 
@@ -25,15 +25,7 @@ class TTASR:
 
         # Define the networks
         # 1. Define and Load the pretrained swinir
-        G_UP_model_conf = {
-            "task": "classical_sr",
-            "scale": conf.scale_factor,
-            "model_type": f"classicalSR_s1_{conf.scale_factor}",
-            # "training_patch_size": conf.input_crop_size,
-            "training_patch_size": 48,
-            "large_model": False
-            }
-        self.G_UP = define_model(**G_UP_model_conf).cuda()
+        self.G_UP = get_model(conf)
         self.D_DN = networks.Discriminator_DN().cuda()
         # 2. Define the down sample network
         self.G_DN = networks.Generator_DN().cuda()
@@ -56,7 +48,7 @@ class TTASR:
         # TODO: below need to rewrite
         # Read input image
         self.read_image(self.conf)
-        
+
 
         # if self.gt_kernel is not None:
         #     self.gt_kernel = np.pad(self.gt_kernel, 1, 'constant')
