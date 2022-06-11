@@ -1,6 +1,6 @@
 # from model import common
 
-import common
+import tta_model.common as common
 import torch.nn as nn
 
 def make_model(args, parent=False):

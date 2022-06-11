@@ -1,7 +1,7 @@
 from argparse import Namespace
 
-from network_swinir import define_model
-from rcan import RCAN
+from tta_model.network_swinir import define_model
+from tta_model.rcan import RCAN
 
 
 def get_model(conf):

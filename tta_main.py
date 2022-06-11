@@ -68,9 +68,6 @@ def train_and_eval(conf):
         loss = model.train(data)
         learner.update(iteration, model)
 
-        loss["iteration"] = iteration
-
-
         if (iteration+1) % conf.model_save_iter == 0:
             model.save_model(iteration+1)
 
@@ -86,8 +83,8 @@ def train_and_eval(conf):
                 best_res["PSNR"] = model.UP_psnrs[-1]
                 best_res["iteration"] = iteration
             pass
-        else:
-            loss["eval/psnr"] = 0
+        # else:
+        #     loss["eval/psnr"] = 0
 
 
         if (iteration+1) % conf.eval_iters == 0:
@@ -96,6 +93,7 @@ def train_and_eval(conf):
                 key = f"{conf.abs_img_name}/{key}"
                 loss_log[key] = val
 
+            loss["iteration"] = iteration
             wandb.log(loss_log)
 
     print("Best PSNR: {}, at iteration: {}".format(best_res["PSNR"], best_res["iteration"]))
