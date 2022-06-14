@@ -59,6 +59,7 @@ class Generator_DN(nn.Module):
 
     def forward(self, x):
         # Swap axis of RGB image for the network to get a "batch" of size = 3 rather the 3 channels
+        # import ipdb; ipdb.set_trace()
         x = make_1ch(x)
         x = self.first_layer(x)
         x = self.feature_block(x)

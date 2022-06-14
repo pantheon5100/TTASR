@@ -3,7 +3,8 @@
 python tta_main.py \
         --input_dir "test/Set5/LR_bicubic/X2" \
         --gt_dir "test/Set5/HR" \
-        --output_dir "TTA_set5" \
+        --output_dir "RCAN-TTA_set5-input48" \
+        --source_model "rcan" \
         --num_iters 4000 \
         --input_crop_size 48 \
         --scale_factor 2 \

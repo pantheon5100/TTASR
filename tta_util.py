@@ -29,7 +29,7 @@ def im2tensor(im_np, normalize_en = False):
     im_np = im_np / 255.0 if im_np.dtype == 'uint8' else im_np
     if normalize_en:
         im_np = im_np * 2.0 - 1.0
-    return torch.FloatTensor(np.transpose(im_np, (2, 0, 1))).unsqueeze(0).cuda()
+    return torch.FloatTensor(np.transpose(im_np, (2, 0, 1))).unsqueeze(0)
 
 
 def resize_tensor_w_kernel(im_t, k, sf=None):

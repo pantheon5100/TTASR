@@ -53,7 +53,14 @@ class options:
         ]
         self.parser.add_argument('--source_model', default='swinir', choices=SUPPORT_SOURCE_MODEL, help='path to one specific image file')
         
-
+        # training mode
+        SUPPORT_TRAIN_MODE=[
+            "single_image",
+            "image_agnostic_gdn"
+        ]
+        self.parser.add_argument('--train_mode', type=str, default='single_image', choices=SUPPORT_TRAIN_MODE)
+        
+        self.parser.add_argument('--pretrained_GDN', type=str, default='')
         
         self.conf = self.parser.parse_args()
         

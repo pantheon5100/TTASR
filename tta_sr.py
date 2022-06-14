@@ -74,11 +74,12 @@ class TTASR:
 
         self.train_G_DN_switch = False
         self.train_G_UP_switch = False
+        self.train_D_DN_switch = True
 
     def read_image(self, conf):
         if conf.input_image_path:
             self.in_img = util.read_image(conf.input_image_path)
-            self.in_img_t= util.im2tensor(self.in_img)
+            self.in_img_t= util.im2tensor(self.in_img).cuda()
             b_x = self.in_img_t.shape[2] % conf.scale_factor
             b_y = self.in_img_t.shape[3] % conf.scale_factor
             self.in_img_cropped_t = self.in_img_t[..., b_x:, b_y:]
@@ -94,21 +95,21 @@ class TTASR:
         loss = {}
 
         # Train G_DN
-        # self.G_UP.eval()
+        self.G_UP.eval()
         # Turn off gradient calculation for G_UP
-        # util.set_requires_grad([self.G_UP], False)
+        util.set_requires_grad([self.G_UP], False)
         # # Turn on gradient calculation for G_DN
-        # util.set_requires_grad([self.G_DN], True)
+        util.set_requires_grad([self.G_DN], True)
         util.set_requires_grad([self.D_DN], False)
         loss_train_G_DN = self.train_G_DN()
 
         # Train G_UP
         self.G_UP.train()
         # # Turn on gradient calculation for G_UP
-        # util.set_requires_grad([self.G_UP], True)
+        util.set_requires_grad([self.G_UP], True)
         # # Turn off gradient calculation for G_DN
-        # # util.set_requires_grad([self.G_DN], True)
-        # util.set_requires_grad([self.G_DN], False)
+        # util.set_requires_grad([self.G_DN], True)
+        util.set_requires_grad([self.G_DN], False)
         # # Turn off gradient calculation for D_DN
         loss_train_G_UP = self.train_G_UP()
 
@@ -134,9 +135,13 @@ class TTASR:
         return loss
       
     def set_input(self, data):
-        self.real_HR = data['HR']
-        self.real_LR = data['LR']
-        self.real_LR_bicubic = data['LR_bicubic']
+        self.real_HR = data['HR'].cuda()
+        self.real_LR = data['LR'].cuda()
+        
+        if self.conf.train_mode == "image_agnostic_gdn":
+            self.real_HR = self.real_HR.reshape([self.real_HR.size(0)*self.real_HR.size(1), self.real_HR.size(2), self.real_HR.size(3), self.real_HR.size(4)])
+            self.real_LR = self.real_LR.reshape([self.real_LR.size(0)*self.real_LR.size(1), self.real_LR.size(2), self.real_LR.size(3), self.real_LR.size(4)])
+        # self.real_LR_bicubic = data['LR_bicubic']
 
 
     def train_G_DN(self):
@@ -164,18 +169,8 @@ class TTASR:
             loss_cycle_forward = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) * self.conf.lambda_cycle
             loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) * self.conf.lambda_cycle
 
-            # sobel_A = Sobel()(self.real_LR_bicubic.detach())
-            # loss_map_A = 1 - torch.clamp(sobel_A, 0, 1)
-            # self.loss_interp = self.criterion_interp(self.fake_HR * loss_map_A, self.real_LR_bicubic * loss_map_A) * self.conf.lambda_interp
-            
-            # self.curr_k = util.calc_curr_k(self.G_DN.parameters())
-            # self.loss_regularization = self.regularization(self.curr_k, self.real_HR, self.fake_LR) * self.conf.lambda_regularization
-                
-            # self.total_loss = self.loss_GAN + self.loss_cycle_forward + self.loss_cycle_backward + self.loss_interp + self.loss_regularization
-            # total_loss = loss_cycle_forward + loss_cycle_backward
             total_loss = loss_cycle_forward + loss_cycle_backward + loss_GAN + self.loss_regularization
             # total_loss = loss_cycle_forward + loss_cycle_backward + self.loss_regularization
-
 
             total_loss.backward()
             
@@ -216,8 +211,34 @@ class TTASR:
             # Losses
             loss_cycle_forward = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) * self.conf.lambda_cycle
             loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) * self.conf.lambda_cycle
+            # self.fake_LR = self.G_DN(self.real_LR)
+            # self.rec_HR = self.G_UP(self.fake_LR)
+            # loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_LR, self.rec_HR)) * self.conf.lambda_cycle
 
             total_loss = loss_cycle_forward + loss_cycle_backward + loss_interp
+
+
+
+            # # Forward path
+            # self.fake_HR = self.G_UP(self.real_LR)
+            # self.rec_LR = self.G_DN(self.fake_HR)
+            # # Backward path
+            # self.fake_LR = self.G_DN(self.real_HR)
+            # self.rec_HR = self.G_UP(self.fake_LR)
+
+            # loss_cycle_forward1 = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) * self.conf.lambda_cycle
+            # self.fake_HR = self.G_UP(self.real_HR)
+            # self.rec_LR = self.G_DN(self.fake_HR)
+            # loss_cycle_forward2 = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_HR, self.rec_LR)) * self.conf.lambda_cycle
+
+
+            # loss_cycle_backward1 = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) * self.conf.lambda_cycle
+            # self.fake_LR = self.G_DN(self.real_LR)
+            # self.rec_HR = self.G_UP(self.fake_LR)
+            # loss_cycle_backward2 = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_LR, self.rec_HR)) * self.conf.lambda_cycle
+
+            # total_loss = loss_cycle_forward1 + loss_cycle_forward2 + loss_cycle_backward1 + loss_cycle_backward2
+            
             total_loss.backward()
 
             # Update weights
@@ -232,20 +253,23 @@ class TTASR:
 
     def train_D_DN(self):
         # Rese gradient valus
-        self.optimizer_D_DN.zero_grad()
+        self.loss_Discriminator = 0
         
-        # Fake
-        pred_fake = self.D_DN(self.fake_LR.detach())
-        loss_D_fake = self.criterion_gan(pred_fake, False)
-        # Real
-        pred_real = self.D_DN(util.shave_a2b(self.real_LR, self.fake_LR))
-        loss_D_real = self.criterion_gan(pred_real, True)
-        # Combined loss and calculate gradients
-        self.loss_Discriminator = (loss_D_real + loss_D_fake) * 0.5
-        self.loss_Discriminator.backward()
+        if self.train_D_DN_switch:
+            self.optimizer_D_DN.zero_grad()
+            
+            # Fake
+            pred_fake = self.D_DN(self.fake_LR.detach())
+            loss_D_fake = self.criterion_gan(pred_fake, False)
+            # Real
+            pred_real = self.D_DN(util.shave_a2b(self.real_LR, self.fake_LR))
+            loss_D_real = self.criterion_gan(pred_real, True)
+            # Combined loss and calculate gradients
+            self.loss_Discriminator = (loss_D_real + loss_D_fake) * 0.5
+            self.loss_Discriminator.backward()
 
-        # Update weights
-        self.optimizer_D_DN.step()
+            # Update weights
+            self.optimizer_D_DN.step()
 
         return {
             "train_D_DN/loss_Discriminator": self.loss_Discriminator
@@ -273,22 +297,26 @@ class TTASR:
         with torch.no_grad():
             downsampled_img_t = self.G_DN(self.in_img_cropped_t)
 
-
+            self.G_UP.eval()
             # NOTE: this code comes from SwinIR
             # pad input image to be a multiple of window_size
-            self.G_UP.eval()
+            if self.conf.source_model == "swinir":
+                window_size = 8
+                _, _, h_old, w_old = self.in_img_t.size()
+                in_img_t = self.in_img_t.clone()
+                h_pad = (h_old // window_size + 1) * window_size - h_old
+                w_pad = (w_old // window_size + 1) * window_size - w_old
+                in_img_t = torch.cat([in_img_t, torch.flip(in_img_t, [2])], 2)[:, :, :h_old + h_pad, :]
+                in_img_t = torch.cat([in_img_t, torch.flip(in_img_t, [3])], 3)[:, :, :, :w_old + w_pad]
+                
+                upsampled_img_t = self.G_UP(in_img_t)
+                upsampled_img_t = upsampled_img_t[..., :h_old * self.conf.scale_factor, :w_old * self.conf.scale_factor]
 
-            window_size = 8
-            _, _, h_old, w_old = self.in_img_t.size()
-            in_img_t = self.in_img_t.clone()
-            h_pad = (h_old // window_size + 1) * window_size - h_old
-            w_pad = (w_old // window_size + 1) * window_size - w_old
-            in_img_t = torch.cat([in_img_t, torch.flip(in_img_t, [2])], 2)[:, :, :h_old + h_pad, :]
-            in_img_t = torch.cat([in_img_t, torch.flip(in_img_t, [3])], 3)[:, :, :, :w_old + w_pad]
+            else:
+                in_img_t = self.in_img_t
+                upsampled_img_t = self.G_UP(in_img_t)
 
-            upsampled_img_t = self.G_UP(in_img_t)
-            upsampled_img_t = upsampled_img_t[..., :h_old * self.conf.scale_factor, :w_old * self.conf.scale_factor]
-        
+
         self.downsampled_img = util.tensor2im(downsampled_img_t)
         self.upsampled_img = util.tensor2im(upsampled_img_t)
         
