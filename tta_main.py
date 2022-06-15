@@ -10,6 +10,7 @@ from datetime import datetime
 
 import ipdb
 import numpy as np
+import setGPU
 import torch
 import tqdm
 import wandb
@@ -38,7 +39,7 @@ def train_and_eval(conf):
     }
     psnr_record = []
     for iteration, data in enumerate(tqdm.tqdm(dataloader)):
-    # NOTE: iteration start from 0
+        # NOTE: iteration start from 0
 
         # Training state change
         if iteration+1 == 1:
@@ -65,20 +66,21 @@ def train_and_eval(conf):
         if (iteration+1) % conf.eval_iters == 0 and model.train_G_UP_switch:
             model.eval(iteration)
             with open(os.path.join(conf.experimentdir, "psnr.txt"), "a") as f:
-                f.write(f"IMG_IDX: {conf.img_idx}. Iteration: {iteration}. {conf.abs_img_name}. PSNR: {model.UP_psnrs[-1]} \n")
-            print(f"IMG_IDX: {conf.img_idx}. Iteration: {iteration}. {conf.abs_img_name}. PSNR: {model.UP_psnrs[-1]}")
-            
+                f.write(
+                    f"IMG_IDX: {conf.img_idx}. Iteration: {iteration}. {conf.abs_img_name}. PSNR: {model.UP_psnrs[-1]} \n")
+            print(
+                f"IMG_IDX: {conf.img_idx}. Iteration: {iteration}. {conf.abs_img_name}. PSNR: {model.UP_psnrs[-1]}")
+
             loss["eval/psnr"] = model.UP_psnrs[-1]
-            
+
             psnr_record.append([iteration, model.UP_psnrs[-1]])
-            
+
             if model.UP_psnrs[-1] > best_res["PSNR"]:
                 best_res["PSNR"] = model.UP_psnrs[-1]
                 best_res["iteration"] = iteration
             pass
         # else:
         #     loss["eval/psnr"] = 0
-
 
         if (iteration+1) % conf.eval_iters == 0:
             loss_log = {}
@@ -89,8 +91,10 @@ def train_and_eval(conf):
             loss_log["iteration"] = iteration
             wandb.log(loss_log)
 
-    torch.save(psnr_record, os.path.join(conf.model_save_dir, f"{conf.abs_img_name}_psnr.pt"))
-    print("Best PSNR: {}, at iteration: {}".format(best_res["PSNR"], best_res["iteration"]))
+    torch.save(psnr_record, os.path.join(
+        conf.model_save_dir, f"{conf.abs_img_name}_psnr.pt"))
+    print("Best PSNR: {}, at iteration: {}".format(
+        best_res["PSNR"], best_res["iteration"]))
     wandb.run.summary[f"best_psnr_{conf.abs_img_name}"] = best_res["PSNR"]
 
     model.eval(0)
@@ -128,13 +132,11 @@ def main():
     opt.conf.model_save_dir = os.path.join(experimentdir, "ckpt")
     os.makedirs(opt.conf.model_save_dir)
 
-
     # save running argument
     with open(os.path.join(experimentdir, 'commandline_args.txt'), 'w') as f:
         json.dump(opt.conf.__dict__, f, indent=2)
     #############################################################################################
     #############################################################################################
-
 
     # init logger
     if not opt.conf.test_only:
@@ -147,7 +149,7 @@ def main():
             config=opt.conf,
             dir=opt.conf.experimentdir,
             save_code=True,
-            )
+        )
 
     #############################################################################################
     # Testing
@@ -164,7 +166,8 @@ def main():
             model.read_image(conf)
             model.eval(0)
             with open(os.path.join(conf.experimentdir, "psnr.txt"), "a") as f:
-                f.write(f"IMG: {img_idx}. Iteration: {0}. {conf.abs_img_name}. PSNR: {model.UP_psnrs[-1]}\n")
+                f.write(
+                    f"IMG: {img_idx}. Iteration: {0}. {conf.abs_img_name}. PSNR: {model.UP_psnrs[-1]}\n")
             all_psnr.append(model.UP_psnrs[-1])
             img_list.append(img_name)
         all_psnr = np.array(all_psnr)
@@ -188,13 +191,13 @@ def main():
             opt=opt,
             pretrained_gdn_state_dict=None,
             TTASR=BicubicGDN
-            )
-    
+        )
+
     elif opt.conf.train_mode == "backward_path":
         # import ipdb; ipdb.set_trace()
         from tta_sr import BackwardPath
         if opt.conf.pretrained_GDN == "":
-            
+
             pretrained_gdn_state_dict = train_gdn(opt, TTASR=BackwardPath)
 
         else:
@@ -206,39 +209,39 @@ def main():
             opt=opt,
             pretrained_gdn_state_dict=pretrained_gdn_state_dict,
             TTASR=BackwardPath,
-            )
-
+        )
 
     elif opt.conf.train_mode == "backward_path_ddn":
-
+        from tta_sr import BackwardPathDDN
         if opt.conf.pretrained_GDN == "":
-            from tta_sr import BackwardPathDDN
             pretrained_gdn_state_dict = train_gdn(opt, TTASR=BackwardPathDDN)
-            
+
         else:
             pretrained_gdn_state_dict = torch.load(opt.conf.pretrained_GDN)
 
         # train image specific GUP
         train_image_specific_GUP(
             opt=opt,
-            pretrained_gdn_state_dict=pretrained_gdn_state_dict
-            )
+            pretrained_gdn_state_dict=pretrained_gdn_state_dict,
+            TTASR=BackwardPathDDN,
+        )
 
     elif opt.conf.train_mode == "backward_path_ddn_plus":
-
+        from tta_sr import BackwardPathDDNPlus
         if opt.conf.pretrained_GDN == "":
-            from tta_sr import BackwardPathDDNPlus
-            pretrained_gdn_state_dict = train_gdn(opt, TTASR=BackwardPathDDNPlus)
-            
+
+            pretrained_gdn_state_dict = train_gdn(
+                opt, TTASR=BackwardPathDDNPlus)
+
         else:
             pretrained_gdn_state_dict = torch.load(opt.conf.pretrained_GDN)
 
         # train image specific GUP
         train_image_specific_GUP(
             opt=opt,
-            pretrained_gdn_state_dict=pretrained_gdn_state_dict
-            )
-
+            pretrained_gdn_state_dict=pretrained_gdn_state_dict,
+            TTASR=BackwardPathDDNPlus,
+        )
 
     elif opt.conf.train_mode == "single_image":
 
@@ -249,14 +252,14 @@ def main():
             conf = opt.get_config(img_name)
             conf.img_idx = img_idx
             psnr = train_and_eval(conf)
-            
+
             all_psnr.append(psnr)
             img_list.append(img_name)
-            
+
         all_psnr = np.array(all_psnr)
         with open(os.path.join(conf.experimentdir, "final_psnr.txt"), "a") as f:
             f.write(f"Input directory: {opt.conf.input_dir}.\n")
-            
+
             for img_idx, (img, psnr) in enumerate(zip(img_list, all_psnr)):
                 f.write(f"{img_idx}. IMG: {img}, psnr: {psnr} .\n")
 
@@ -270,19 +273,20 @@ def main():
         # when we train gup we do not update gdn and (2) we still
         # update gdn before or when we train gup
         # os.environ["WANDB_MODE"] = "offline"
-
+        from tta_sr import TTASR_Base
         if opt.conf.pretrained_GDNtime.clock() == "":
-            from tta_sr import TTASR_Base
+
             pretrained_gdn_state_dict = train_gdn(opt, TTASR=TTASR_Base)
-            
+
         else:
             pretrained_gdn_state_dict = torch.load(opt.conf.pretrained_GDN)
 
         # train image specific GUP
         train_image_specific_GUP(
             opt=opt,
-            pretrained_gdn_state_dict=pretrained_gdn_state_dict
-            )
+            pretrained_gdn_state_dict=pretrained_gdn_state_dict,
+            TTASR=TTASR_Base,
+        )
 
     else:
 
@@ -291,38 +295,38 @@ def main():
 
 def train_gdn(opt, TTASR: TTASR_Base):
     print('*' * 60 + '\nTraining GDN started ...')
-    
-    start=time.process_time()
-    
+
+    start = time.process_time()
+
     opt = copy.deepcopy(opt)
     opt.conf.num_iters = 3000
     opt.conf.switch_iters = 3000
     opt.conf.update_l_rate_freq_gdn = 750
-    
-    end=time.process_time()
+
+    end = time.process_time()
     print(f"setting opt for gdn: {start-end} seconds.")
-    
-    start=time.process_time()
-    
+
+    start = time.process_time()
+
     model = TTASR(opt.conf)
     # use all image to train, every batch contains all image
     from tta_data import create_dataset_for_image_agnostic_gdn
     dataloader = create_dataset_for_image_agnostic_gdn(opt.conf)
     learner = Learner(model)
-    
+
     # freeze GUP
     model.train_G_DN_switch = True
     model.train_G_UP_switch = False
     model.reshap_train_data = True
     model.G_UP.eval()
-    
+
     util.set_requires_grad([model.G_UP], False)
     # Turn on gradient calculation for G_DN
     util.set_requires_grad([model.G_DN], True)
 
-    end=time.process_time()
+    end = time.process_time()
     print(f"setting model and dataloader for gdn: {start-end} seconds.")
-    
+
     # train GDN
     # dataloader time: 0.0003034459998616512
     # optimization time: 1.9583428319999712
@@ -331,12 +335,12 @@ def train_gdn(opt, TTASR: TTASR_Base):
     # dataloader_time = time.process_time()
     # for iteration, data in enumerate(tqdm.tqdm(dataloader)):
     for iteration, data in enumerate(dataloader):
-        
+
         # dataloader_time = time.process_time() - dataloader_time
         # print(f"dataloader time: {dataloader_time}")
-        
+
         # iter_time = time.process_time()
-        
+
         # train_time = time.process_time()
         loss = model.train(data)
         # train_time = time.process_time() - train_time
@@ -353,26 +357,28 @@ def train_gdn(opt, TTASR: TTASR_Base):
             wandb.log(loss_log)
             # log_time = time.process_time() - log_time
             # print(f"log time: {log_time}")
-        
+
         # learner_update_time = time.process_time()
         learner.update(iteration, model)
         # learner_update_time = time.process_time() - learner_update_time
         # print(f"learner update time: {learner_update_time}")
-        
+
         # iter_time = time.process_time() - iter_time
         # print(f"iter total time: {iter_time}")
         # print("\n")
         # dataloader_time = time.process_time()
-        
+
     # save the pretrained GDN
-    torch.save(model.G_DN.state_dict(), os.path.join(opt.conf.model_save_dir, "pretrained_GDN.ckpt"))
+    torch.save(model.G_DN.state_dict(), os.path.join(
+        opt.conf.model_save_dir, "pretrained_GDN.ckpt"))
 
     return model.G_DN.state_dict()
 
+
 def train_image_specific_GUP(opt, pretrained_gdn_state_dict, TTASR):
-    torch.set_num_threads(3) 
+    torch.set_num_threads(3)
     print('*' * 60 + '\nTraining image specific GUP started ...')
-    
+
     best_res = {
         "iteration": 0,
         "PSNR": 0,
@@ -418,16 +424,16 @@ def train_image_specific_GUP(opt, pretrained_gdn_state_dict, TTASR):
             if (iteration+1) % conf.eval_iters == 0 and model_img_specific.train_G_UP_switch:
                 model_img_specific.eval(iteration)
                 with open(os.path.join(conf.experimentdir, "psnr.txt"), "a") as f:
-                    f.write(f"IMG_IDX: {conf.img_idx}. iteration: {iteration}. {conf.abs_img_name}. PSNR: {model_img_specific.UP_psnrs[-1]} \n")
+                    f.write(
+                        f"IMG_IDX: {conf.img_idx}. iteration: {iteration}. {conf.abs_img_name}. PSNR: {model_img_specific.UP_psnrs[-1]} \n")
                 # print(f"{iteration}. {conf.abs_img_name}. PSNR: {model_img_specific.UP_psnrs[-1]}")
-                
+
                 loss["eval/psnr"] = model_img_specific.UP_psnrs[-1]
-                
+
                 if model_img_specific.UP_psnrs[-1] > best_res["PSNR"]:
                     best_res["PSNR"] = model_img_specific.UP_psnrs[-1]
                     best_res["iteration"] = iteration
                 pass
-
 
             if (iteration+1) % conf.eval_iters == 0:
                 loss_log = {}
@@ -442,16 +448,17 @@ def train_image_specific_GUP(opt, pretrained_gdn_state_dict, TTASR):
 
         all_psnr.append(model_img_specific.UP_psnrs[-1])
         img_list.append(img_name)
-        
+
     all_psnr = np.array(all_psnr)
     with open(os.path.join(conf.experimentdir, "final_psnr.txt"), "a") as f:
         f.write(f"Input directory: {opt.conf.input_dir}.\n")
-        
+
         for img, psnr in zip(img_list, all_psnr):
             f.write(f"IMG: {img}, psnr: {psnr} .\n")
 
         f.write(f"Average PSNR: {np.mean(all_psnr)}.\n")
     print(f"Average PSNR for {opt.conf.input_dir}: {np.mean(all_psnr)}")
+
 
 if __name__ == '__main__':
     main()
