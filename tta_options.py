@@ -29,6 +29,9 @@ class options:
         self.parser.add_argument(
             '--batch_size', type=int, default=2, help='batch size for training')
         self.parser.add_argument(
+            '--each_batch_img_size', type=int, default=5, help='batch size for training')
+
+        self.parser.add_argument(
             '--scale_factor', type=int, default=2, help='The upscaling scale factor')
         self.parser.add_argument('--scale_factor_downsampler', type=float,
                                  default=0.5, help='scale factor for downsampler')

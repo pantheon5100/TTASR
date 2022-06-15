@@ -108,7 +108,7 @@ class DataGenerator(Dataset):
 
 def create_dataset_for_image_agnostic_gdn(conf):
     dataset = DataGenerator_ALLIMG(conf)
-    dataloader = DataLoader(dataset, batch_size=conf.batch_size, shuffle=False, pin_memory=True, num_workers=4)
+    dataloader = DataLoader(dataset, batch_size=conf.batch_size, shuffle=False, pin_memory=True, num_workers=3)
     return dataloader
 
 class DataGenerator_ALLIMG(Dataset):
@@ -130,6 +130,7 @@ class DataGenerator_ALLIMG(Dataset):
         # Read input image
         img_dir_list = os.listdir(conf.input_dir)
         self.num_imgs = len(img_dir_list)
+        assert self.conf.each_batch_img_size <= self.num_imgs
         
         self.all_img = []
         self.in_rows, self.in_cols = [], []
@@ -175,7 +176,7 @@ class DataGenerator_ALLIMG(Dataset):
         
         # generate seletion img
         img_list = [i for i in range(self.num_imgs)]
-        img_selection = random.sample(img_list, 16)
+        img_selection = random.sample(img_list, self.conf.each_batch_img_size)
         
         g_in = self.next_crop(for_g=True, idx=idx, img_selection=img_selection)
         d_in = self.next_crop(for_g=False, idx=idx, img_selection=img_selection)
@@ -194,11 +195,13 @@ class DataGenerator_ALLIMG(Dataset):
         
         all_crop_img = []
         # for n in range(self.num_imgs):
-        for n in range(16):
-            top, left = self.get_top_left(size, for_g, idx, n)
+        for n in range(self.conf.each_batch_img_size):
+            top, left = self.get_top_left(size, for_g, idx, img_selection[n])
             crop_im = self.all_img[img_selection[n]][top:top + size, left:left + size, :]
+            if crop_im.shape != (size, size, 3):
+                import ipdb; ipdb.set_trace()
             all_crop_img.append(crop_im)
-        
+        # import ipdb; ipdb.set_trace()
         all_crop_img = np.array(all_crop_img)
         
         return all_crop_img
@@ -239,4 +242,13 @@ class DataGenerator_ALLIMG(Dataset):
         row, col = int(center / self.in_cols[img_idx]), center % self.in_cols[img_idx]
         top, left = min(max(0, row - size // 2), self.in_rows[img_idx] - size), min(max(0, col - size // 2), self.in_cols[img_idx] - size)
         # Choose even indices (to avoid misalignment with the loss map for_g)
-        return top - top % 2, left - left % 2
+        # import ipdb; ipdb.set_trace()
+
+        top = top - top % 2
+        left = left - left % 2
+
+        if (self.in_rows[img_idx] - top < size) or (self.in_cols[img_idx] - left < size):
+            import ipdb; ipdb.set_trace()
+        
+
+        return top, left

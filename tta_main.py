@@ -102,7 +102,7 @@ def train_and_eval(conf):
 
 
 def main():
-    torch.set_num_threads(4)
+    torch.set_num_threads(5)
 
     opt = options()
 
