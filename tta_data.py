@@ -1,4 +1,5 @@
 import os
+import random
 
 import numpy as np
 import torch
@@ -171,8 +172,13 @@ class DataGenerator_ALLIMG(Dataset):
 
     def __getitem__(self, idx):
         """Get a crop for both G and D """
-        g_in = self.next_crop(for_g=True, idx=idx)
-        d_in = self.next_crop(for_g=False, idx=idx)
+        
+        # generate seletion img
+        img_list = [i for i in range(self.num_imgs)]
+        img_selection = random.sample(img_list, 16)
+        
+        g_in = self.next_crop(for_g=True, idx=idx, img_selection=img_selection)
+        d_in = self.next_crop(for_g=False, idx=idx, img_selection=img_selection)
         # d_bq = imresize(im=d_in, scale_factor=int(1/self.conf.scale_factor_downsampler), kernel='cubic')
     
         # return {'HR':im2tensor(g_in).squeeze(), 'LR':im2tensor(d_in).squeeze(), 'LR_bicubic':im2tensor(d_bq).squeeze()}
@@ -182,14 +188,15 @@ class DataGenerator_ALLIMG(Dataset):
             'LR':torch.FloatTensor(np.transpose(d_in, (0, 3, 1, 2)))
             }
 
-    def next_crop(self, for_g, idx):
+    def next_crop(self, for_g, idx, img_selection):
         """Return a crop according to the pre-determined list of indices. Noise is added to crops for D"""
         size = self.g_input_shape if for_g else self.d_input_shape
         
         all_crop_img = []
-        for n in range(self.num_imgs):
+        # for n in range(self.num_imgs):
+        for n in range(16):
             top, left = self.get_top_left(size, for_g, idx, n)
-            crop_im = self.all_img[n][top:top + size, left:left + size, :]
+            crop_im = self.all_img[img_selection[n]][top:top + size, left:left + size, :]
             all_crop_img.append(crop_im)
         
         all_crop_img = np.array(all_crop_img)
