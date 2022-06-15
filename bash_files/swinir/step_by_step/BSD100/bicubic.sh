@@ -22,7 +22,7 @@
 python tta_main.py \
         --input_dir "../dataset/BSD/LR_bicubic/x2" \
         --gt_dir "../dataset/BSD/HR" \
-        --output_dir "TTA_sbs-bicubic-bsd100" \
+        --output_dir "TTA_sbs-bicubic-BSD" \
         --train_mode "bicubic" \
         --num_iters 1000 \
         --input_crop_size 48 \
