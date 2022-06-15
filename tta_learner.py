@@ -1,7 +1,7 @@
 import torch
 import math
 
-from tta_sr import TTASR
+from tta_sr import TTASR_Base as TTASR
 
 class Learner:
     # Default hyper-parameters

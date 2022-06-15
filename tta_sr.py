@@ -1,19 +1,20 @@
+import os
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import wandb
-import loss
-import networks
-import tta_util as util
-import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
-import numpy as np
 from scipy.io import loadmat
-import os
+
+import networks
+import tta_loss as loss
+import tta_util as util
 from torch_sobel import Sobel
-
-from tta_model.network_swinir import define_model
 from tta_model.get_model import get_model
+from tta_model.network_swinir import define_model
 
-class TTASR:
+
+class TTASR_Base:
 
     def __init__(self, conf):
         # Fix random seed
@@ -50,14 +51,6 @@ class TTASR:
         self.read_image(self.conf)
 
 
-        # if self.gt_kernel is not None:
-        #     self.gt_kernel = np.pad(self.gt_kernel, 1, 'constant')
-        #     self.gt_kernel = util.kernel_shift(self.gt_kernel, sf=conf.scale_factor)
-        #     self.gt_kernel_t = torch.FloatTensor(self.gt_kernel).cuda()
-
-        #     self.gt_downsampled_img_t = util.downscale_with_kernel(self.in_img_cropped_t, self.gt_kernel_t)
-        #     self.gt_downsampled_img = util.tensor2im(self.gt_downsampled_img_t)
-
         # debug variables
         self.debug_steps = []
         self.UP_psnrs = [] if self.gt_img is not None else None
@@ -75,8 +68,25 @@ class TTASR:
         self.train_G_DN_switch = False
         self.train_G_UP_switch = False
         self.train_D_DN_switch = True
+        
+        self.reshap_train_data = False
+
+    def set_input(self, data):
+        '''
+        get image for training.
+        '''
+        self.real_HR = data['HR'].cuda()
+        self.real_LR = data['LR'].cuda()
+        
+        if self.reshap_train_data:
+            self.real_HR = self.real_HR.reshape([self.real_HR.size(0)*self.real_HR.size(1), self.real_HR.size(2), self.real_HR.size(3), self.real_HR.size(4)])
+            self.real_LR = self.real_LR.reshape([self.real_LR.size(0)*self.real_LR.size(1), self.real_LR.size(2), self.real_LR.size(3), self.real_LR.size(4)])
 
     def read_image(self, conf):
+        '''
+        Read image for testing.
+        '''
+        
         if conf.input_image_path:
             self.in_img = util.read_image(conf.input_image_path)
             self.in_img_t= util.im2tensor(self.in_img).cuda()
@@ -88,192 +98,6 @@ class TTASR:
         self.gt_kernel = loadmat(conf.kernel_path)['Kernel'] if conf.kernel_path is not None else None
         self.UP_psnrs = [] if self.gt_img is not None else None
         self.DN_psnrs = [] if self.gt_kernel is not None else None
-
-    def train(self, data):
-        self.set_input(data)
-
-        loss = {}
-
-        # Train G_DN
-        self.G_UP.eval()
-        # Turn off gradient calculation for G_UP
-        util.set_requires_grad([self.G_UP], False)
-        # # Turn on gradient calculation for G_DN
-        util.set_requires_grad([self.G_DN], True)
-        util.set_requires_grad([self.D_DN], False)
-        loss_train_G_DN = self.train_G_DN()
-
-        # Train G_UP
-        self.G_UP.train()
-        # # Turn on gradient calculation for G_UP
-        util.set_requires_grad([self.G_UP], True)
-        # # Turn off gradient calculation for G_DN
-        # util.set_requires_grad([self.G_DN], True)
-        util.set_requires_grad([self.G_DN], False)
-        # # Turn off gradient calculation for D_DN
-        loss_train_G_UP = self.train_G_UP()
-
-        # Train D_DN
-        # Turn on gradient calculation for discriminator
-        util.set_requires_grad([self.D_DN], True)
-        loss_train_D_DN = self.train_D_DN()
-        
-
-        loss.update(loss_train_G_DN)
-        loss.update(loss_train_G_UP)
-        loss.update(loss_train_D_DN)
-
-
-
-        if self.conf.debug:
-            if self.iter % self.conf.eval_iters == 0:
-                self.quick_eval()
-            if self.iter % self.conf.plot_iters == 0:
-                self.plot()
-        self.iter = self.iter + 1
-
-        return loss
-      
-    def set_input(self, data):
-        self.real_HR = data['HR'].cuda()
-        self.real_LR = data['LR'].cuda()
-        
-        if self.conf.train_mode == "image_agnostic_gdn":
-            self.real_HR = self.real_HR.reshape([self.real_HR.size(0)*self.real_HR.size(1), self.real_HR.size(2), self.real_HR.size(3), self.real_HR.size(4)])
-            self.real_LR = self.real_LR.reshape([self.real_LR.size(0)*self.real_LR.size(1), self.real_LR.size(2), self.real_LR.size(3), self.real_LR.size(4)])
-        # self.real_LR_bicubic = data['LR_bicubic']
-
-
-    def train_G_DN(self):
-        loss_cycle_forward = 0
-        loss_cycle_backward = 0
-        total_loss = 0
-        loss_GAN = 0
-        self.loss_regularization = 0
-
-        if self.train_G_DN_switch:
-
-            # Reset gradient valus
-            # self.optimizer_G_UP.zero_grad()
-            self.optimizer_G_DN.zero_grad()
-            
-            # Forward path
-            self.fake_HR = self.G_UP(self.real_LR)
-            self.rec_LR = self.G_DN(self.fake_HR)
-            # Backward path
-            self.fake_LR = self.G_DN(self.real_HR)
-            self.rec_HR = self.G_UP(self.fake_LR)
-
-            # Losses
-            loss_GAN = self.criterion_gan(self.D_DN(self.fake_LR), True)
-            loss_cycle_forward = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) * self.conf.lambda_cycle
-            loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) * self.conf.lambda_cycle
-
-            total_loss = loss_cycle_forward + loss_cycle_backward + loss_GAN + self.loss_regularization
-            # total_loss = loss_cycle_forward + loss_cycle_backward + self.loss_regularization
-
-            total_loss.backward()
-            
-            # self.optimizer_G_UP.step()
-            self.optimizer_G_DN.step()
-            
-        return {
-            "train_G_DN/loss_cycle_forward": loss_cycle_forward, 
-            "train_G_DN/loss_cycle_backward":loss_cycle_backward,
-            "train_G_DN/total_loss":total_loss,
-            "train_G_DN/loss_GAN": loss_GAN,
-            "train_G_DN/loss_regularization": self.loss_regularization,
-            }
-
-    def train_G_UP(self):
-        loss_cycle_forward = 0
-        loss_cycle_backward = 0
-        total_loss = 0
-        loss_interp = 0
-        
-        if self.train_G_UP_switch:
-
-            # Rese gradient valus
-            self.optimizer_G_UP.zero_grad()
-
-            # Forward path
-            self.fake_HR = self.G_UP(self.real_LR)
-            self.rec_LR = self.G_DN(self.fake_HR)
-            # Backward path
-            self.fake_LR = self.G_DN(self.real_HR)
-            self.rec_HR = self.G_UP(self.fake_LR)
-
-
-            # sobel_A = Sobel()(self.real_LR_bicubic.detach())
-            # loss_map_A = 1 - torch.clamp(sobel_A, 0, 1)
-            # loss_interp = self.criterion_interp(self.fake_HR * loss_map_A, self.real_LR_bicubic * loss_map_A) * self.conf.lambda_interp
-
-            # Losses
-            loss_cycle_forward = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) * self.conf.lambda_cycle
-            loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) * self.conf.lambda_cycle
-            # self.fake_LR = self.G_DN(self.real_LR)
-            # self.rec_HR = self.G_UP(self.fake_LR)
-            # loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_LR, self.rec_HR)) * self.conf.lambda_cycle
-
-            total_loss = loss_cycle_forward + loss_cycle_backward + loss_interp
-
-
-
-            # # Forward path
-            # self.fake_HR = self.G_UP(self.real_LR)
-            # self.rec_LR = self.G_DN(self.fake_HR)
-            # # Backward path
-            # self.fake_LR = self.G_DN(self.real_HR)
-            # self.rec_HR = self.G_UP(self.fake_LR)
-
-            # loss_cycle_forward1 = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) * self.conf.lambda_cycle
-            # self.fake_HR = self.G_UP(self.real_HR)
-            # self.rec_LR = self.G_DN(self.fake_HR)
-            # loss_cycle_forward2 = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_HR, self.rec_LR)) * self.conf.lambda_cycle
-
-
-            # loss_cycle_backward1 = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) * self.conf.lambda_cycle
-            # self.fake_LR = self.G_DN(self.real_LR)
-            # self.rec_HR = self.G_UP(self.fake_LR)
-            # loss_cycle_backward2 = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_LR, self.rec_HR)) * self.conf.lambda_cycle
-
-            # total_loss = loss_cycle_forward1 + loss_cycle_forward2 + loss_cycle_backward1 + loss_cycle_backward2
-            
-            total_loss.backward()
-
-            # Update weights
-            self.optimizer_G_UP.step()
-
-        return {
-            "train_G_UP/loss_cycle_forward": loss_cycle_forward, 
-            "train_G_UP/loss_cycle_backward":loss_cycle_backward,
-            "train_G_UP/total_loss":total_loss,
-            "train_G_UP/loss_interp":loss_interp,
-            }
-
-    def train_D_DN(self):
-        # Rese gradient valus
-        self.loss_Discriminator = 0
-        
-        if self.train_D_DN_switch:
-            self.optimizer_D_DN.zero_grad()
-            
-            # Fake
-            pred_fake = self.D_DN(self.fake_LR.detach())
-            loss_D_fake = self.criterion_gan(pred_fake, False)
-            # Real
-            pred_real = self.D_DN(util.shave_a2b(self.real_LR, self.fake_LR))
-            loss_D_real = self.criterion_gan(pred_real, True)
-            # Combined loss and calculate gradients
-            self.loss_Discriminator = (loss_D_real + loss_D_fake) * 0.5
-            self.loss_Discriminator.backward()
-
-            # Update weights
-            self.optimizer_D_DN.step()
-
-        return {
-            "train_D_DN/loss_Discriminator": self.loss_Discriminator
-        }
 
     def eval(self, iteration, save_sr=False):
         self.quick_eval()
@@ -328,119 +152,8 @@ class TTASR:
             self.UP_psnrs += [util.cal_y_psnr(self.upsampled_img, self.gt_img[:h_old * self.conf.scale_factor, :w_old * self.conf.scale_factor, ...], border=self.conf.scale_factor)]
         self.debug_steps += [self.iter]
 
-        if self.conf.debug:
-            # Save loss values for visualization
-            self.loss_GANs += [util.move2cpu(self.loss_GAN)]
-            self.loss_cycle_forwards += [util.move2cpu(self.loss_cycle_forward)]
-            self.loss_cycle_backwards += [util.move2cpu(self.loss_cycle_backward)]
-            self.loss_interps += [util.move2cpu(self.loss_interp)]
-            self.loss_Discriminators += [util.move2cpu(self.loss_Discriminator)]
 
 
-    def plot(self):
-        loss_names = ['loss_GANs', 'loss_cycle_forwards', 'loss_cycle_backwards', 'loss_interps', 'loss_Discriminators']
-        
-        if self.gt_img is not None:
-            plots_data, labels = zip(*[(np.array(x), l) for (x, l)
-                               in zip([self.UP_psnrs, self.DN_psnrs],
-                                      ['Upsampler PSNR', 'Downsampler PSNR']) if x is not None])
-        else:
-            plots_data, labels = [0.0], 'None'
-        
-        plots_data2, labels2 = zip(*[(np.array(x), l) for (x, l)
-                                   in zip([getattr(self, name) for name in loss_names],
-                                          loss_names) if x is not None])
-        # For the first iteration create the figure
-        if not self.iter:
-            # Create figure and split it using GridSpec. Name each region as needed
-            self.fig = plt.figure(figsize=(9, 8))
-            #self.fig = plt.figure()
-            grid = GridSpec(4, 4)
-            self.psnr_plot_space = plt.subplot(grid[0:2, 0:2])
-            self.loss_plot_space = plt.subplot(grid[0:2, 2:4])
-            
-            self.real_LR_space = plt.subplot(grid[2, 0])
-            self.fake_HR_space = plt.subplot(grid[2, 1])
-            self.rec_LR_space = plt.subplot(grid[2, 2])
-            self.real_HR_space = plt.subplot(grid[3, 0])
-            self.fake_LR_space = plt.subplot(grid[3, 1])
-            self.rec_HR_space = plt.subplot(grid[3, 2])
-            self.curr_ker_space = plt.subplot(grid[2, 3])
-            self.ideal_ker_space = plt.subplot(grid[3, 3])
-
-            # Activate interactive mode for live plot updating
-            plt.ion()
-
-            # Set some parameters for the plots
-            self.psnr_plot_space.set_ylabel('db')
-            self.psnr_plot_space.grid(True)
-            self.psnr_plot_space.legend(labels)
-            
-            self.loss_plot_space.grid(True)
-            self.loss_plot_space.legend(labels2)
-            
-            self.curr_ker_space.title.set_text('estimated kernel')
-            self.ideal_ker_space.title.set_text('gt kernel')
-            self.real_LR_space.title.set_text('$x$')
-            self.real_HR_space.title.set_text('$y$')
-            self.fake_HR_space.title.set_text('$G_{UP}(x)$')
-            self.fake_LR_space.title.set_text('$G_{DN}(y)$')
-            self.rec_LR_space.title.set_text('$G_{DN}(G_{UP}(x))$')
-            self.rec_HR_space.title.set_text('$G_{UP}(G_{DN}(y))$')
-            
-            # loop over all needed plot types. if some data is none than skip, if some data is one value tile it
-            self.plots = self.psnr_plot_space.plot(*[[0]] * 2 * len(plots_data))
-            self.plots2 = self.loss_plot_space.plot(*[[0]] * 2 * len(plots_data2))
-            
-            # These line are needed in order to see the graphics at real time
-            self.fig.tight_layout()
-            self.fig.canvas.draw()
-            plt.pause(0.01)
-            return
-
-        # Update plots
-        for plot, plot_data in zip(self.plots, plots_data):
-            plot.set_data(self.debug_steps, plot_data)
-            
-        for plot, plot_data in zip(self.plots2, plots_data2):
-            plot.set_data(self.debug_steps, plot_data)
-        
-        self.psnr_plot_space.set_xlim([0, self.iter + 1])
-        all_losses = np.array(plots_data)
-        self.psnr_plot_space.set_ylim([np.min(all_losses)*0.9, np.max(all_losses)*1.1])
-        
-        self.loss_plot_space.set_xlim([0, self.iter + 1])
-        all_losses2 = np.array(plots_data2)
-        self.loss_plot_space.set_ylim([np.min(all_losses2)*0.9, np.max(all_losses2)*1.1])
-
-        self.psnr_plot_space.legend(labels)
-        self.loss_plot_space.legend(labels2)
-
-        # Show current images
-        self.curr_ker_space.imshow(util.move2cpu(self.curr_k))
-        if self.gt_kernel is not None:
-            self.ideal_ker_space.imshow(self.gt_kernel)
-        self.real_LR_space.imshow(util.tensor2im(self.real_LR))
-        self.real_HR_space.imshow(util.tensor2im(self.real_HR))
-        self.fake_HR_space.imshow(util.tensor2im(self.fake_HR))
-        self.fake_LR_space.imshow(util.tensor2im(self.fake_LR))
-        self.rec_LR_space.imshow(util.tensor2im(self.rec_LR))
-        self.rec_HR_space.imshow(util.tensor2im(self.rec_HR))
-        
-        self.curr_ker_space.axis('off')
-        self.ideal_ker_space.axis('off')
-        self.real_LR_space.axis('off')
-        self.real_HR_space.axis('off')
-        self.fake_HR_space.axis('off')
-        self.fake_LR_space.axis('off')
-        self.rec_LR_space.axis('off')
-        self.rec_HR_space.axis('off')
-        
-            
-        # These line are needed in order to see the graphics at real time
-        self.fig.tight_layout()
-        self.fig.canvas.draw()
-        plt.pause(0.01)
     
     def save_model(self, iteration):
 
@@ -452,3 +165,729 @@ class TTASR:
 
 
 
+
+
+class DualPath(TTASR_Base):
+    '''
+    In this mehod, we implement our most basic idea in which we train the G_DN
+    and G_UP
+    '''
+    def __init__(
+        self,
+        conf
+    ):
+        super().__init__(conf)
+
+
+    def train(self, data):
+        self.set_input(data)
+
+        loss = {}
+
+        # Train G_DN
+        self.G_UP.eval()
+        # Turn off gradient calculation for G_UP
+        util.set_requires_grad([self.G_UP], False)
+        # # Turn on gradient calculation for G_DN
+        util.set_requires_grad([self.G_DN], True)
+        util.set_requires_grad([self.D_DN], False)
+        loss_train_G_DN = self.train_G_DN()
+
+        # Train G_UP
+        self.G_UP.train()
+        # # Turn on gradient calculation for G_UP
+        util.set_requires_grad([self.G_UP], True)
+        # # Turn off gradient calculation for G_DN
+        # util.set_requires_grad([self.G_DN], True)
+        util.set_requires_grad([self.G_DN], False)
+        # # Turn off gradient calculation for D_DN
+        loss_train_G_UP = self.train_G_UP()
+
+        # Train D_DN
+        # Turn on gradient calculation for discriminator
+        util.set_requires_grad([self.D_DN], True)
+        loss_train_D_DN = self.train_D_DN()
+
+        loss.update(loss_train_G_DN)
+        loss.update(loss_train_G_UP)
+        loss.update(loss_train_D_DN)
+
+
+
+        if self.conf.debug:
+            if self.iter % self.conf.eval_iters == 0:
+                self.quick_eval()
+            if self.iter % self.conf.plot_iters == 0:
+                self.plot()
+        self.iter = self.iter + 1
+
+        return loss
+
+    def train_G_DN(self):
+        loss_cycle_forward = 0
+        loss_cycle_backward = 0
+        total_loss = 0
+        loss_GAN = 0
+        self.loss_regularization = 0
+
+        if self.train_G_DN_switch:
+
+            # Reset gradient valus
+            # self.optimizer_G_UP.zero_grad()
+            self.optimizer_G_DN.zero_grad()
+
+            # Forward path
+            self.fake_HR = self.G_UP(self.real_LR)
+            self.rec_LR = self.G_DN(self.fake_HR)
+            # Backward path
+            self.fake_LR = self.G_DN(self.real_HR)
+            self.rec_HR = self.G_UP(self.fake_LR)
+
+            # Losses
+            loss_GAN = self.criterion_gan(self.D_DN(self.fake_LR), True)
+            loss_cycle_forward = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) #* self.conf.lambda_cycle
+            loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) #* self.conf.lambda_cycle
+
+            total_loss = loss_cycle_forward + loss_cycle_backward + loss_GAN + self.loss_regularization
+            # total_loss = loss_cycle_forward + loss_cycle_backward + self.loss_regularization
+
+            total_loss.backward()
+
+            # self.optimizer_G_UP.step()
+            self.optimizer_G_DN.step()
+
+        return {
+            "train_G_DN/loss_cycle_forward": loss_cycle_forward, 
+            "train_G_DN/loss_cycle_backward":loss_cycle_backward,
+            "train_G_DN/total_loss":total_loss,
+            "train_G_DN/loss_GAN": loss_GAN,
+            "train_G_DN/loss_regularization": self.loss_regularization,
+            }
+
+    def train_G_UP(self):
+        loss_cycle_forward = 0
+        loss_cycle_backward = 0
+        total_loss = 0
+        loss_interp = 0
+        
+        if self.train_G_UP_switch:
+
+            # Rese gradient valus
+            self.optimizer_G_UP.zero_grad()
+
+            # Forward path
+            self.fake_HR = self.G_UP(self.real_LR)
+            self.rec_LR = self.G_DN(self.fake_HR)
+            # Backward path
+            self.fake_LR = self.G_DN(self.real_HR)
+            self.rec_HR = self.G_UP(self.fake_LR)
+
+            # Losses
+            loss_cycle_forward = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) #* self.conf.lambda_cycle
+            loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) #* self.conf.lambda_cycle
+            # self.fake_LR = self.G_DN(self.real_LR)
+            # self.rec_HR = self.G_UP(self.fake_LR)
+            # loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_LR, self.rec_HR)) * self.conf.lambda_cycle
+
+            total_loss = loss_cycle_forward + loss_cycle_backward + loss_interp
+
+            total_loss.backward()
+
+            # Update weights
+            self.optimizer_G_UP.step()
+
+        return {
+            "train_G_UP/loss_cycle_forward": loss_cycle_forward, 
+            "train_G_UP/loss_cycle_backward":loss_cycle_backward,
+            "train_G_UP/total_loss":total_loss,
+            "train_G_UP/loss_interp":loss_interp,
+            }
+
+    def train_D_DN(self):
+        # Rese gradient valus
+        self.loss_Discriminator = 0
+        
+        if self.train_D_DN_switch:
+            self.optimizer_D_DN.zero_grad()
+            
+            # Fake
+            pred_fake = self.D_DN(self.fake_LR.detach())
+            loss_D_fake = self.criterion_gan(pred_fake, False)
+            # Real
+            pred_real = self.D_DN(util.shave_a2b(self.real_LR, self.fake_LR))
+            loss_D_real = self.criterion_gan(pred_real, True)
+            # Combined loss and calculate gradients
+            self.loss_Discriminator = (loss_D_real + loss_D_fake) * 0.5
+            self.loss_Discriminator.backward()
+
+            # Update weights
+            self.optimizer_D_DN.step()
+
+        return {
+            "train_D_DN/loss_Discriminator": self.loss_Discriminator
+        }
+
+
+
+
+class BicubicGDN(TTASR_Base):
+    '''
+    In this mehod, we implement our most basic idea in which we train the G_DN
+    and G_UP
+    '''
+    def __init__(
+        self,
+        conf
+    ):
+        super().__init__(conf)
+
+
+    def train(self, data):
+        self.set_input(data)
+
+        loss = {}
+
+        # Train G_UP
+        self.G_UP.train()
+        # # Turn on gradient calculation for G_UP
+        util.set_requires_grad([self.G_UP], True)
+
+        loss_train_G_UP = self.train_G_UP()
+        loss.update(loss_train_G_UP)
+
+        return loss
+
+
+    def train_G_UP(self):
+        loss_cycle_forward = 0
+        loss_cycle_backward = 0
+        total_loss = 0
+        
+        if self.train_G_UP_switch:
+
+            # Rese gradient valus
+            self.optimizer_G_UP.zero_grad()
+
+            # Forward path
+            # self.fake_HR = self.G_UP(self.real_LR)
+            # self.rec_LR = torch.nn.functional.interpolate(input=self.fake_HR, scale_factor=0.5, mode='bicubic')
+            # self.rec_LR = self.G_DN(self.fake_HR)
+            # Backward path
+            # self.fake_LR = self.G_DN(self.real_HR)
+            self.fake_LR = torch.nn.functional.interpolate(input=self.real_HR, scale_factor=0.5, mode='bicubic')
+            self.rec_HR = self.G_UP(self.fake_LR)
+
+            # Losses
+            # loss_cycle_forward = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) #* self.conf.lambda_cycle
+            loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) #* self.conf.lambda_cycle
+
+            total_loss = loss_cycle_forward + loss_cycle_backward
+
+            total_loss.backward()
+
+            # Update weights
+            self.optimizer_G_UP.step()
+
+        return {
+            "train_G_UP/loss_cycle_forward": loss_cycle_forward, 
+            "train_G_UP/loss_cycle_backward":loss_cycle_backward,
+            "train_G_UP/total_loss":total_loss,
+            }
+
+
+
+
+
+class BackwardPathDDN(TTASR_Base):
+    '''
+    In this mehod, we implement our most basic idea in which we train the G_DN
+    and G_UP
+    '''
+    def __init__(
+        self,
+        conf
+    ):
+        super().__init__(conf)
+
+
+    def train(self, data):
+        self.set_input(data)
+
+        loss = {}
+
+        # Train G_DN
+        self.G_UP.eval()
+        # Turn off gradient calculation for G_UP
+        util.set_requires_grad([self.G_UP], False)
+        # # Turn on gradient calculation for G_DN
+        util.set_requires_grad([self.G_DN], True)
+        util.set_requires_grad([self.D_DN], False)
+        loss_train_G_DN = self.train_G_DN()
+
+        # Train G_UP
+        self.G_UP.train()
+        # # Turn on gradient calculation for G_UP
+        util.set_requires_grad([self.G_UP], True)
+        # # Turn off gradient calculation for G_DN
+        # util.set_requires_grad([self.G_DN], True)
+        util.set_requires_grad([self.G_DN], False)
+        # # Turn off gradient calculation for D_DN
+        loss_train_G_UP = self.train_G_UP()
+
+        # Train D_DN
+        # Turn on gradient calculation for discriminator
+        util.set_requires_grad([self.D_DN], True)
+        loss_train_D_DN = self.train_D_DN()
+
+        loss.update(loss_train_G_DN)
+        loss.update(loss_train_G_UP)
+        loss.update(loss_train_D_DN)
+
+
+
+        if self.conf.debug:
+            if self.iter % self.conf.eval_iters == 0:
+                self.quick_eval()
+            if self.iter % self.conf.plot_iters == 0:
+                self.plot()
+        self.iter = self.iter + 1
+
+        return loss
+
+    def train_G_DN(self):
+        loss_cycle_forward = 0
+        loss_cycle_backward = 0
+        total_loss = 0
+        loss_GAN = 0
+        self.loss_regularization = 0
+
+        if self.train_G_DN_switch:
+
+            # Reset gradient valus
+            # self.optimizer_G_UP.zero_grad()
+            self.optimizer_G_DN.zero_grad()
+
+            # Forward path
+            # self.fake_HR = self.G_UP(self.real_LR)
+            # self.rec_LR = self.G_DN(self.fake_HR)
+            # Backward path
+            self.fake_LR = self.G_DN(self.real_HR)
+            self.rec_HR = self.G_UP(self.fake_LR)
+
+            # Losses
+            loss_GAN = self.criterion_gan(self.D_DN(self.fake_LR), True)
+            # loss_cycle_forward = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) #* self.conf.lambda_cycle
+            loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) #* self.conf.lambda_cycle
+
+            total_loss = loss_cycle_forward + loss_cycle_backward + loss_GAN + self.loss_regularization
+            # total_loss = loss_cycle_forward + loss_cycle_backward + self.loss_regularization
+
+            total_loss.backward()
+
+            # self.optimizer_G_UP.step()
+            self.optimizer_G_DN.step()
+
+        return {
+            "train_G_DN/loss_cycle_forward": loss_cycle_forward, 
+            "train_G_DN/loss_cycle_backward":loss_cycle_backward,
+            "train_G_DN/total_loss":total_loss,
+            "train_G_DN/loss_GAN": loss_GAN,
+            "train_G_DN/loss_regularization": self.loss_regularization,
+            }
+
+    def train_G_UP(self):
+        loss_cycle_forward = 0
+        loss_cycle_backward = 0
+        total_loss = 0
+        loss_interp = 0
+        
+        if self.train_G_UP_switch:
+
+            # Rese gradient valus
+            self.optimizer_G_UP.zero_grad()
+
+            # Forward path
+            # self.fake_HR = self.G_UP(self.real_LR)
+            # self.rec_LR = self.G_DN(self.fake_HR)
+            # Backward path
+            self.fake_LR = self.G_DN(self.real_HR)
+            self.rec_HR = self.G_UP(self.fake_LR)
+
+            # Losses
+            # loss_cycle_forward = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) #* self.conf.lambda_cycle
+            loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) #* self.conf.lambda_cycle
+            # self.fake_LR = self.G_DN(self.real_LR)
+            # self.rec_HR = self.G_UP(self.fake_LR)
+            # loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_LR, self.rec_HR)) * self.conf.lambda_cycle
+
+            total_loss = loss_cycle_forward + loss_cycle_backward + loss_interp
+
+            total_loss.backward()
+
+            # Update weights
+            self.optimizer_G_UP.step()
+
+        return {
+            "train_G_UP/loss_cycle_forward": loss_cycle_forward, 
+            "train_G_UP/loss_cycle_backward":loss_cycle_backward,
+            "train_G_UP/total_loss":total_loss,
+            "train_G_UP/loss_interp":loss_interp,
+            }
+
+    def train_D_DN(self):
+        # Rese gradient valus
+        self.loss_Discriminator = 0
+        
+        if self.train_D_DN_switch:
+            self.optimizer_D_DN.zero_grad()
+            
+            # Fake
+            pred_fake = self.D_DN(self.fake_LR.detach())
+            loss_D_fake = self.criterion_gan(pred_fake, False)
+            # Real
+            pred_real = self.D_DN(util.shave_a2b(self.real_LR, self.fake_LR))
+            loss_D_real = self.criterion_gan(pred_real, True)
+            # Combined loss and calculate gradients
+            self.loss_Discriminator = (loss_D_real + loss_D_fake) * 0.5
+            self.loss_Discriminator.backward()
+
+            # Update weights
+            self.optimizer_D_DN.step()
+
+        return {
+            "train_D_DN/loss_Discriminator": self.loss_Discriminator
+        }
+
+
+
+
+
+
+
+
+
+
+
+class BackwardPath(TTASR_Base):
+    '''
+    In this mehod, we implement our most basic idea in which we train the G_DN
+    and G_UP
+    '''
+    def __init__(
+        self,
+        conf
+    ):
+        super().__init__(conf)
+
+
+    def train(self, data):
+        self.set_input(data)
+
+        loss = {}
+
+        # Train G_DN
+        self.G_UP.eval()
+        # Turn off gradient calculation for G_UP
+        util.set_requires_grad([self.G_UP], False)
+        # # Turn on gradient calculation for G_DN
+        util.set_requires_grad([self.G_DN], True)
+        # util.set_requires_grad([self.D_DN], False)
+        loss_train_G_DN = self.train_G_DN()
+
+        # Train G_UP
+        self.G_UP.train()
+        # # Turn on gradient calculation for G_UP
+        util.set_requires_grad([self.G_UP], True)
+        # # Turn off gradient calculation for G_DN
+        # util.set_requires_grad([self.G_DN], True)
+        util.set_requires_grad([self.G_DN], False)
+        # # Turn off gradient calculation for D_DN
+        loss_train_G_UP = self.train_G_UP()
+
+        # Train D_DN
+        # Turn on gradient calculation for discriminator
+        # util.set_requires_grad([self.D_DN], True)
+        # loss_train_D_DN = self.train_D_DN()
+
+        loss.update(loss_train_G_DN)
+        loss.update(loss_train_G_UP)
+        # loss.update(loss_train_D_DN)
+
+
+
+        if self.conf.debug:
+            if self.iter % self.conf.eval_iters == 0:
+                self.quick_eval()
+            if self.iter % self.conf.plot_iters == 0:
+                self.plot()
+        self.iter = self.iter + 1
+
+        return loss
+
+    def train_G_DN(self):
+        loss_cycle_forward = 0
+        loss_cycle_backward = 0
+        total_loss = 0
+        loss_GAN = 0
+        self.loss_regularization = 0
+
+        if self.train_G_DN_switch:
+
+            # Reset gradient valus
+            # self.optimizer_G_UP.zero_grad()
+            self.optimizer_G_DN.zero_grad()
+
+            # Forward path
+            # self.fake_HR = self.G_UP(self.real_LR)
+            # self.rec_LR = self.G_DN(self.fake_HR)
+            # Backward path
+            self.fake_LR = self.G_DN(self.real_HR)
+            self.rec_HR = self.G_UP(self.fake_LR)
+
+            # Losses
+            # loss_GAN = self.criterion_gan(self.D_DN(self.fake_LR), True)
+            # loss_cycle_forward = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) #* self.conf.lambda_cycle
+            loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) #* self.conf.lambda_cycle
+
+            total_loss = loss_cycle_forward + loss_cycle_backward + loss_GAN + self.loss_regularization
+            # total_loss = loss_cycle_forward + loss_cycle_backward + self.loss_regularization
+
+            total_loss.backward()
+
+            # self.optimizer_G_UP.step()
+            self.optimizer_G_DN.step()
+
+        return {
+            "train_G_DN/loss_cycle_forward": loss_cycle_forward, 
+            "train_G_DN/loss_cycle_backward":loss_cycle_backward,
+            "train_G_DN/total_loss":total_loss,
+            "train_G_DN/loss_GAN": loss_GAN,
+            "train_G_DN/loss_regularization": self.loss_regularization,
+            }
+
+    def train_G_UP(self):
+        loss_cycle_forward = 0
+        loss_cycle_backward = 0
+        total_loss = 0
+        loss_interp = 0
+        
+        if self.train_G_UP_switch:
+
+            # Rese gradient valus
+            self.optimizer_G_UP.zero_grad()
+
+            # Forward path
+            # self.fake_HR = self.G_UP(self.real_LR)
+            # self.rec_LR = self.G_DN(self.fake_HR)
+            # Backward path
+            self.fake_LR = self.G_DN(self.real_HR)
+            self.rec_HR = self.G_UP(self.fake_LR)
+
+            # Losses
+            # loss_cycle_forward = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) #* self.conf.lambda_cycle
+            loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) #* self.conf.lambda_cycle
+            # self.fake_LR = self.G_DN(self.real_LR)
+            # self.rec_HR = self.G_UP(self.fake_LR)
+            # loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_LR, self.rec_HR)) * self.conf.lambda_cycle
+
+            total_loss = loss_cycle_forward + loss_cycle_backward + loss_interp
+
+            total_loss.backward()
+
+            # Update weights
+            self.optimizer_G_UP.step()
+
+        return {
+            "train_G_UP/loss_cycle_forward": loss_cycle_forward, 
+            "train_G_UP/loss_cycle_backward":loss_cycle_backward,
+            "train_G_UP/total_loss":total_loss,
+            "train_G_UP/loss_interp":loss_interp,
+            }
+
+    # def train_D_DN(self):
+    #     # Rese gradient valus
+    #     self.loss_Discriminator = 0
+        
+    #     if self.train_D_DN_switch:
+    #         self.optimizer_D_DN.zero_grad()
+            
+    #         # Fake
+    #         pred_fake = self.D_DN(self.fake_LR.detach())
+    #         loss_D_fake = self.criterion_gan(pred_fake, False)
+    #         # Real
+    #         pred_real = self.D_DN(util.shave_a2b(self.real_LR, self.fake_LR))
+    #         loss_D_real = self.criterion_gan(pred_real, True)
+    #         # Combined loss and calculate gradients
+    #         self.loss_Discriminator = (loss_D_real + loss_D_fake) * 0.5
+    #         self.loss_Discriminator.backward()
+
+    #         # Update weights
+    #         self.optimizer_D_DN.step()
+
+    #     return {
+    #         "train_D_DN/loss_Discriminator": self.loss_Discriminator
+    #     }
+
+
+
+
+
+class BackwardPathDDNPlus(TTASR_Base):
+    '''
+    In this mehod, we implement our most basic idea in which we train the G_DN
+    and G_UP
+    '''
+    def __init__(
+        self,
+        conf
+    ):
+        super().__init__(conf)
+
+
+    def train(self, data):
+        self.set_input(data)
+
+        loss = {}
+
+        # Train G_DN
+        self.G_UP.eval()
+        # Turn off gradient calculation for G_UP
+        util.set_requires_grad([self.G_UP], False)
+        # # Turn on gradient calculation for G_DN
+        util.set_requires_grad([self.G_DN], True)
+        util.set_requires_grad([self.D_DN], False)
+        loss_train_G_DN = self.train_G_DN()
+
+        # Train G_UP
+        self.G_UP.train()
+        # # Turn on gradient calculation for G_UP
+        util.set_requires_grad([self.G_UP], True)
+        # # Turn off gradient calculation for G_DN
+        # util.set_requires_grad([self.G_DN], True)
+        util.set_requires_grad([self.G_DN], False)
+        # # Turn off gradient calculation for D_DN
+        loss_train_G_UP = self.train_G_UP()
+
+        # Train D_DN
+        # Turn on gradient calculation for discriminator
+        util.set_requires_grad([self.D_DN], True)
+        loss_train_D_DN = self.train_D_DN()
+
+        loss.update(loss_train_G_DN)
+        loss.update(loss_train_G_UP)
+        loss.update(loss_train_D_DN)
+
+
+
+        if self.conf.debug:
+            if self.iter % self.conf.eval_iters == 0:
+                self.quick_eval()
+            if self.iter % self.conf.plot_iters == 0:
+                self.plot()
+        self.iter = self.iter + 1
+
+        return loss
+
+    def train_G_DN(self):
+        loss_cycle_forward = 0
+        loss_cycle_backward = 0
+        total_loss = 0
+        loss_GAN = 0
+        self.loss_regularization = 0
+
+        if self.train_G_DN_switch:
+
+            # Reset gradient valus
+            # self.optimizer_G_UP.zero_grad()
+            self.optimizer_G_DN.zero_grad()
+
+            # Forward path
+            # self.fake_HR = self.G_UP(self.real_LR)
+            # self.rec_LR = self.G_DN(self.fake_HR)
+            # Backward path
+            self.fake_LR = self.G_DN(self.real_HR)
+            self.rec_HR = self.G_UP(self.fake_LR)
+
+            # Losses
+            loss_GAN = self.criterion_gan(self.D_DN(self.fake_LR), True)
+            # loss_cycle_forward = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) #* self.conf.lambda_cycle
+            loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) #* self.conf.lambda_cycle
+
+            total_loss = loss_cycle_forward + loss_cycle_backward + loss_GAN + self.loss_regularization
+            # total_loss = loss_cycle_forward + loss_cycle_backward + self.loss_regularization
+
+            total_loss.backward()
+
+            # self.optimizer_G_UP.step()
+            self.optimizer_G_DN.step()
+
+        return {
+            "train_G_DN/loss_cycle_forward": loss_cycle_forward, 
+            "train_G_DN/loss_cycle_backward":loss_cycle_backward,
+            "train_G_DN/total_loss":total_loss,
+            "train_G_DN/loss_GAN": loss_GAN,
+            "train_G_DN/loss_regularization": self.loss_regularization,
+            }
+
+    def train_G_UP(self):
+        loss_cycle_forward = 0
+        loss_cycle_backward = 0
+        total_loss = 0
+        loss_interp = 0
+        
+        if self.train_G_UP_switch:
+
+            # Rese gradient valus
+            self.optimizer_G_UP.zero_grad()
+
+            # Forward path
+            self.fake_HR = self.G_UP(self.real_LR)
+            self.rec_LR = self.G_DN(self.fake_HR)
+            # Backward path
+            self.fake_LR = self.G_DN(self.real_HR)
+            self.rec_HR = self.G_UP(self.fake_LR)
+
+            # Losses
+            loss_cycle_forward = self.criterion_cycle(self.rec_LR, util.shave_a2b(self.real_LR, self.rec_LR)) #* self.conf.lambda_cycle
+            loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_HR, self.rec_HR)) #* self.conf.lambda_cycle
+            # self.fake_LR = self.G_DN(self.real_LR)
+            # self.rec_HR = self.G_UP(self.fake_LR)
+            # loss_cycle_backward = self.criterion_cycle(self.rec_HR, util.shave_a2b(self.real_LR, self.rec_HR)) * self.conf.lambda_cycle
+
+            total_loss = loss_cycle_forward + loss_cycle_backward + loss_interp
+
+            total_loss.backward()
+
+            # Update weights
+            self.optimizer_G_UP.step()
+
+        return {
+            "train_G_UP/loss_cycle_forward": loss_cycle_forward, 
+            "train_G_UP/loss_cycle_backward":loss_cycle_backward,
+            "train_G_UP/total_loss":total_loss,
+            "train_G_UP/loss_interp":loss_interp,
+            }
+
+    def train_D_DN(self):
+        # Rese gradient valus
+        self.loss_Discriminator = 0
+        
+        if self.train_D_DN_switch:
+            self.optimizer_D_DN.zero_grad()
+            
+            # Fake
+            pred_fake = self.D_DN(self.fake_LR.detach())
+            loss_D_fake = self.criterion_gan(pred_fake, False)
+            # Real
+            pred_real = self.D_DN(util.shave_a2b(self.real_LR, self.fake_LR))
+            loss_D_real = self.criterion_gan(pred_real, True)
+            # Combined loss and calculate gradients
+            self.loss_Discriminator = (loss_D_real + loss_D_fake) * 0.5
+            self.loss_Discriminator.backward()
+
+            # Update weights
+            self.optimizer_D_DN.step()
+
+        return {
+            "train_D_DN/loss_Discriminator": self.loss_Discriminator
+        }

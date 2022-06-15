@@ -55,6 +55,10 @@ class options:
         
         # training mode
         SUPPORT_TRAIN_MODE=[
+            "bicubic",
+            "backward_path",
+            "backward_path_ddn",
+            "backward_path_ddn_plus",
             "single_image",
             "image_agnostic_gdn"
         ]
