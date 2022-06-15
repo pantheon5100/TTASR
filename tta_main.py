@@ -298,17 +298,17 @@ def main():
 def train_gdn(opt, TTASR: TTASR_Base):
     print('*' * 60 + '\nTraining GDN started ...')
 
-    start = time.process_time()
+    # start = time.process_time()
 
     opt = copy.deepcopy(opt)
     opt.conf.num_iters = 3000
     opt.conf.switch_iters = 3000
     opt.conf.update_l_rate_freq_gdn = 750
 
-    end = time.process_time()
-    print(f"setting opt for gdn: {start-end} seconds.")
+    # end = time.process_time()
+    # print(f"setting opt for gdn: {start-end} seconds.")
 
-    start = time.process_time()
+    # start = time.process_time()
 
     model = TTASR(opt.conf)
     # use all image to train, every batch contains all image
@@ -326,8 +326,8 @@ def train_gdn(opt, TTASR: TTASR_Base):
     # Turn on gradient calculation for G_DN
     util.set_requires_grad([model.G_DN], True)
 
-    end = time.process_time()
-    print(f"setting model and dataloader for gdn: {start-end} seconds.")
+    # end = time.process_time()
+    # print(f"setting model and dataloader for gdn: {start-end} seconds.")
 
     # train GDN
     # dataloader time: 0.0003034459998616512
@@ -335,8 +335,8 @@ def train_gdn(opt, TTASR: TTASR_Base):
     # learner update time: 7.288000006155926e-06
     # iter total time: 1.9584988839999369
     # dataloader_time = time.process_time()
-    # for iteration, data in enumerate(tqdm.tqdm(dataloader)):
-    for iteration, data in enumerate(dataloader):
+    for iteration, data in enumerate(tqdm.tqdm(dataloader)):
+    # for iteration, data in enumerate(dataloader):
 
         # dataloader_time = time.process_time() - dataloader_time
         # print(f"dataloader time: {dataloader_time}")
