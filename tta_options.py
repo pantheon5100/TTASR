@@ -109,10 +109,13 @@ class options:
         if "Set5" in self.conf.gt_dir:
             self.conf.gt_path = os.path.join(
                 self.conf.gt_dir, img_name[:-6]+".png") if self.conf.gt_dir != '' else None
-        elif "my_RealSR" in self.conf.gt_dir:
+        elif "RealSR" in self.conf.gt_dir:
             self.conf.gt_path = os.path.join(self.conf.gt_dir, img_name)
 
         elif "BSD" in self.conf.gt_dir:
+            self.conf.gt_path = os.path.join(self.conf.gt_dir, img_name)
+
+        elif "Urban" in self.conf.gt_dir:
             self.conf.gt_path = os.path.join(self.conf.gt_dir, img_name)
 
         else:
