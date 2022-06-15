@@ -1,8 +1,8 @@
 
 python tta_main.py \
-        --input_dir "test/Set5/LR_bicubic/X2" \
-        --gt_dir "test/Set5/HR" \
-        --output_dir "TTA_sbs-backward_path" \
+        --input_dir "../dataset/myRealSR/Test/2/LR" \
+        --gt_dir "../dataset/myRealSR/Test/2/HR" \
+        --output_dir "TTA_sbs-backward_path-myRealSR" \
         --train_mode "backward_path" \
         --num_iters 1000 \
         --input_crop_size 48 \
